@@ -42,5 +42,10 @@
     <Preference
         android:title="@string/liquid_about_dev_title"
         android:summary="@string/liquid_about_dev_summary">
+    <intent
+        android:action="android.intent.action.VIEW"
+        android:data="https://plus.google.com/u/0/116681430209948821465" />
+    </Prefernce>
+
     </PreferenceCategory>
 </PreferenceScreen>
