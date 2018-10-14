@@ -39,7 +39,7 @@
     <string name="liquid_telegram_summary">Tap here to join our telegram chat!</string>
 
     <!-- LIQUID OTA updates -->
-    <string name="updates_liquid_title">VenoRom OTA</string>
+    <string name="updates_liquid_title">VenomRom OTA</string>
     <string name="updates_liquid_summary">Find new available OTA updates</string>
 
     <!-- Liquid Lounge -->
