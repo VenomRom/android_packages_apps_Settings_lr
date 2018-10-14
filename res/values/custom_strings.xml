@@ -17,7 +17,7 @@
 <resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2">
 
     <!-- LIQUID version -->
-    <string name="liquid_version">LiquidRemix Build</string>
+    <string name="liquid_version">VenomRom Build</string>
     <string name="liquid_version_default">Unknown</string>
 
     <!-- Fingerprint location message -->
@@ -29,26 +29,22 @@
     <string name="device_maintainer">Maintainer</string>
 
     <!-- LIQUID about -->
-    <string name="liquid_about_title">About Liquid Remix</string>
+    <string name="liquid_about_title">About Venom</string>
     <string name="liquid_about_info">ROM</string>
-    <string name="liquid_about_info_summary">Liquid Remix is a project reborn by the creator of Liquid Smooth. With the help of VenkatVV they have brought back this amazing project based on Lineage.</string>
+    <string name="liquid_about_info_summary">VenomRom is purely based on Liquid Remix and huge thanks to liquid0624. With the help of VenkatVV they have brought back this amazing project based on Lineage.</string>
     <string name="liquid_about_devs">About Team</string>
-    <string name="liquid_about_dev_title">Ryan (liquid0624)</string>
+    <string name="liquid_about_dev_title">Syed Sajid (syedsajid)</string>
     <string name="liquid_about_dev_summary">Founder/Lead Dev</string>
-    <string name="liquid_about_dev2_title">VenkatVV (venky_holmes)</string>
-    <string name="liquid_about_dev2_summary">CO-Lead/Core Dev</string>
-    <string name="liquid_telegram_title">Liquid Remix Telegram</string>
+    <string name="liquid_telegram_title">VenomRom Telegram</string>
     <string name="liquid_telegram_summary">Tap here to join our telegram chat!</string>
-    <string name="liquid_gplus_title">Liquid Remix Google Plus</string>
-    <string name="liquid_gplus_summary">Tap here to join our gplus community!</string> 
 
     <!-- LIQUID OTA updates -->
-    <string name="updates_liquid_title">LiquidRemix OTA</string>
+    <string name="updates_liquid_title">VenoRom OTA</string>
     <string name="updates_liquid_summary">Find new available OTA updates</string>
 
     <!-- Liquid Lounge -->
-    <string name="liquidlounge_title">Liquid Lounge</string>
-    <string name="liquidlounge_activity_summary">Personalize custom features</string>
+    <string name="liquidlounge_title">The Venom</string>
+    <string name="liquidlounge_activity_summary">Step into the venom</string>
 
     <!-- Phone info -->
     <string name="device_info_title">Phone info</string>
