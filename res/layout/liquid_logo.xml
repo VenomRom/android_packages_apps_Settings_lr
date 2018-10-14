@@ -26,6 +26,6 @@
         android:layout_height="100dp"
         android:adjustViewBounds="true"
         android:scaleType="centerInside"
-        android:src="@drawable/ic_anbout_venom" />
+        android:src="@drawable/ic_about_venom" />
 
 </LinearLayout>
