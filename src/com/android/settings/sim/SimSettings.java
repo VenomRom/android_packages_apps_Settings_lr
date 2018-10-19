@@ -19,20 +19,25 @@ package com.android.settings.sim;
 import android.app.AlertDialog;
 import android.app.Dialog;
 import android.app.ProgressDialog;
+import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.res.Resources;
 import android.graphics.drawable.BitmapDrawable;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
+import android.os.RemoteException;
+import android.os.ServiceManager;
 import android.os.SystemProperties;
 import android.provider.SearchIndexableResource;
 import android.provider.Settings;
 import android.support.v7.preference.Preference;
-import android.support.v7.preference.PreferenceGroup;
+import android.support.v7.preference.PreferenceCategory;
+import android.support.v7.preference.PreferenceManager;
 import android.support.v7.preference.PreferenceScreen;
 import android.support.v7.preference.PreferenceViewHolder;
 import android.telecom.PhoneAccount;
@@ -44,12 +49,16 @@ import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.text.TextUtils;
+import android.util.AttributeSet;
 import android.util.Log;
+import android.view.LayoutInflater;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.CompoundButton;
 import android.widget.CompoundButton.OnCheckedChangeListener;
 
 import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
+import com.android.internal.telephony.PhoneConstants;
 import com.android.internal.telephony.TelephonyProperties;
 import com.android.settings.R;
 import com.android.settings.RestrictedSettingsFragment;
@@ -57,19 +66,22 @@ import com.android.settings.Utils;
 import com.android.settings.search.BaseSearchIndexProvider;
 import com.android.settings.search.Indexable;
 
-import com.android.internal.telephony.util.TelephonyExtUtils;
-import com.android.internal.telephony.util.TelephonyExtUtils.ProvisioningChangedListener;
+import org.codeaurora.internal.IExtTelephony;
 
-import static com.android.internal.telephony.util.TelephonyExtUtils.PROVISIONED;
-import static com.android.internal.telephony.util.TelephonyExtUtils.NOT_PROVISIONED;
-
+import java.lang.NoClassDefFoundError;
 import java.util.ArrayList;
 import java.util.List;
 
-public class SimSettings extends RestrictedSettingsFragment implements Indexable,
-        ProvisioningChangedListener {
+public class SimSettings extends RestrictedSettingsFragment implements Indexable {
     private static final String TAG = "SimSettings";
     private static final boolean DBG = false;
+
+    // These are the list of  possible values that
+    // IExtTelephony.getCurrentUiccCardProvisioningStatus() can return
+    private static final int PROVISIONED = 1;
+    private static final int NOT_PROVISIONED = 0;
+    private static final int INVALID_STATE = -1;
+    private static final int CARD_NOT_PRESENT = -2;
 
     private static final String DISALLOW_CONFIG_SIM = "no_config_sim";
     private static final String SIM_CARD_CATEGORY = "sim_cards";
@@ -87,10 +99,11 @@ public class SimSettings extends RestrictedSettingsFragment implements Indexable
     private List<SubscriptionInfo> mAvailableSubInfos = null;
     private List<SubscriptionInfo> mSubInfoList = null;
     private List<SubscriptionInfo> mSelectableSubInfos = null;
-    private PreferenceGroup mSimCards = null;
+    private PreferenceCategory mSimCards = null;
     private SubscriptionManager mSubscriptionManager;
     private int mNumSlots;
     private Context mContext;
+    private IExtTelephony mExtTelephony;
 
     private int mPhoneCount = TelephonyManager.getDefault().getPhoneCount();
     private int[] mCallState = new int[mPhoneCount];
@@ -100,6 +113,10 @@ public class SimSettings extends RestrictedSettingsFragment implements Indexable
     private ProgressDialog mProgressDialog = null;
     private boolean mNeedsUpdate = false;
     private int[] mUiccProvisionStatus = new int[mPhoneCount];
+
+    private static final String ACTION_UICC_MANUAL_PROVISION_STATUS_CHANGED =
+            "org.codeaurora.intent.action.ACTION_UICC_MANUAL_PROVISION_STATUS_CHANGED";
+    private static final String EXTRA_NEW_PROVISION_STATE = "newProvisionState";
 
     public SimSettings() {
         super(DISALLOW_CONFIG_SIM);
@@ -118,26 +135,29 @@ public class SimSettings extends RestrictedSettingsFragment implements Indexable
         mSubscriptionManager = SubscriptionManager.from(getActivity());
         final TelephonyManager tm =
                 (TelephonyManager) getActivity().getSystemService(Context.TELEPHONY_SERVICE);
+        try {
+            mExtTelephony = IExtTelephony.Stub.asInterface(ServiceManager.getService("extphone"));
+        } catch (NoClassDefFoundError ex) {
+            // ignore, device does not compile telephony-ext.
+        }
+
         addPreferencesFromResource(R.xml.sim_settings);
 
         mNumSlots = tm.getSimCount();
-        mSimCards = (PreferenceGroup)findPreference(SIM_CARD_CATEGORY);
+        mSimCards = (PreferenceCategory)findPreference(SIM_CARD_CATEGORY);
         mAvailableSubInfos = new ArrayList<SubscriptionInfo>(mNumSlots);
         mSelectableSubInfos = new ArrayList<SubscriptionInfo>();
         SimSelectNotification.cancelNotification(getActivity());
 
-        TelephonyExtUtils.getInstance(mContext).addListener(this);
+        IntentFilter intentFilter = new IntentFilter(ACTION_UICC_MANUAL_PROVISION_STATUS_CHANGED);
+        mContext.registerReceiver(mReceiver, intentFilter);
     }
 
     @Override
     public void onDestroy() {
-        TelephonyExtUtils.getInstance(mContext).removeListener(this);
+        mContext.unregisterReceiver(mReceiver);
+        Log.d(TAG,"on onDestroy");
         super.onDestroy();
-    }
-
-    @Override
-    public void onProvisioningChanged(int slotId, boolean isProvisioned) {
-        updateSubscriptions();
     }
 
     private final SubscriptionManager.OnSubscriptionsChangedListener mOnSubscriptionsChangeListener
@@ -352,7 +372,12 @@ public class SimSettings extends RestrictedSettingsFragment implements Indexable
         Context mContext;
 
         public SimPreference(Context context, SubscriptionInfo subInfoRecord, int slotId) {
-            super(context);
+            this(context, null, 0, subInfoRecord, slotId);
+        }
+
+        public SimPreference(Context context, AttributeSet attrs, int defStyle,
+                SubscriptionInfo subInfoRecord, int slotId) {
+            super(context, attrs, defStyle);
             mContext = context;
             mSubInfoRecord = subInfoRecord;
             mSlotId = slotId;
@@ -363,14 +388,9 @@ public class SimSettings extends RestrictedSettingsFragment implements Indexable
         public void update() {
             final Resources res = mContext.getResources();
 
-            setTitle(String.format(mContext.getResources()
-                    .getString(R.string.sim_editor_title), (mSlotId + 1)));
-            if (mSubInfoRecord != null) {
-                if (TextUtils.isEmpty(getPhoneNumber(mSubInfoRecord))) {
-                    setSummary(mSubInfoRecord.getDisplayName());
-                } else {
-                    setSummary(mSubInfoRecord.getDisplayName() + " - " +
-                            PhoneNumberUtils.createTtsSpannable(getPhoneNumber(mSubInfoRecord)));
+            setTitle(res.getString(R.string.sim_editor_title, (mSlotId + 1)));
+            if (isValid()) {
+                if (!TextUtils.isEmpty(getPhoneNumber(mSubInfoRecord))) {
                     setEnabled(true);
                 }
                 setSummary(determineSummary());
@@ -415,7 +435,6 @@ public class SimSettings extends RestrictedSettingsFragment implements Indexable
 
         private boolean mCurrentUiccProvisionState;
         private boolean mIsChecked;
-
         private boolean mCmdInProgress = false;
         private CompoundButton mSwitch;
         //Delay for progress dialog to dismiss
@@ -423,7 +442,7 @@ public class SimSettings extends RestrictedSettingsFragment implements Indexable
         private static final int MSG_DELAY_TIME = 2000;
 
         public SimEnablerPreference(Context context, SubscriptionInfo sir, int slotId) {
-            super(context, sir, slotId);
+            super(context, null, com.android.internal.R.attr.checkBoxPreferenceStyle, sir, slotId);
             setWidgetLayoutResource(R.layout.liquid_sim_switch);
         }
 
@@ -446,10 +465,6 @@ public class SimSettings extends RestrictedSettingsFragment implements Indexable
                     Settings.Global.AIRPLANE_MODE_ON, 0) != 0);
         }
 
-        private boolean isSlotProvisioned(int slotId) {
-            return getProvisionStatus(slotId) == PROVISIONED;
-        }
-
         private int getProvisionStatus(int slotId) {
             return mUiccProvisionStatus[slotId];
         }
@@ -463,51 +478,43 @@ public class SimSettings extends RestrictedSettingsFragment implements Indexable
 
             // Hide manual provisioning if the extphone framework
             // is not present, as the operation relies on said framework.
-            if (!TelephonyExtUtils.getInstance(mContext).hasService() ||
+            if (mExtTelephony == null ||
                    !mContext.getResources().getBoolean(R.bool.config_enableManualSubProvisioning)) {
                 mSwitch.setVisibility(View.GONE);
             } else {
                 mSwitch.setVisibility(View.VISIBLE);
-                if (isAirplaneModeOn() || (!isCurrentSubValid())) {
-                    mSwitch.setEnabled(false);
-                } else {
-                    mSwitch.setEnabled(true);
-                }
-                setChecked(isSlotProvisioned(mSlotId));
+                mSwitch.setEnabled(!isAirplaneModeOn() && isValid());
+                setChecked(getProvisionStatus(mSlotId) == PROVISIONED);
             }
         }
 
         @Override
         public void update() {
+            final Resources res = mContext.getResources();
             logd("update()" + mSubInfoRecord);
 
-            // Get current provision state of the SIM,
-            // assuming it as provisioned if extphone framework is not present
-            TelephonyExtUtils extTelephony = TelephonyExtUtils.getInstance(mContext);
-            mUiccProvisionStatus[mSlotId] = extTelephony.hasService() ?
-                    extTelephony.getCurrentUiccCardProvisioningStatus(mSlotId) :
-                    PROVISIONED;
+            if (mExtTelephony != null) {
+                try {
+                    //get current provision state of the SIM.
+                    mUiccProvisionStatus[mSlotId] =
+                            mExtTelephony.getCurrentUiccCardProvisioningStatus(mSlotId);
+                } catch (RemoteException ex) {
+                    mUiccProvisionStatus[mSlotId] = INVALID_STATE;
+                    loge("Failed to get pref, slotId: "+ mSlotId +" Exception: " + ex);
+                }
+            } else {
+                // if we don't have telephony-ext, assume provisioned state
+                mUiccProvisionStatus[mSlotId] = PROVISIONED;
+            }
 
             super.update();
         }
 
         // This method returns true if SubScription record corresponds to this
         // Preference screen has a valid SIM and slot index/SubId.
-        private boolean isCurrentSubValid() {
-            boolean isSubValid = false;
-            if (hasCard()) {
-                SubscriptionInfo sir = mSubscriptionManager.
-                        getActiveSubscriptionInfoForSimSlotIndex(mSlotId);
-                if (sir != null ) {
-                    mSubInfoRecord = sir;
-                    if (SubscriptionManager.isValidSubscriptionId(mSubInfoRecord.getSubscriptionId()) &&
-                            mSubInfoRecord.getSimSlotIndex() >= 0 &&
-                            getProvisionStatus(mSubInfoRecord.getSimSlotIndex()) >= 0) {
-                        isSubValid = true;
-                    }
-                }
-            }
-            return isSubValid;
+        @Override
+        protected boolean isValid() {
+            return super.isValid() && getProvisionStatus(mSlotId) >= 0;
         }
 
         // Based on the received SIM provision state this method
@@ -528,7 +535,7 @@ public class SimSettings extends RestrictedSettingsFragment implements Indexable
 
         @Override
         protected CharSequence determineSummary() {
-            if (!isSlotProvisioned(mSlotId)) {
+            if (getProvisionStatus(mSlotId) != PROVISIONED) {
                 CharSequence state = mContext.getString(
                         hasCard() ? R.string.sim_disabled : R.string.sim_missing);
                 return mContext.getString(R.string.sim_enabler_summary,
@@ -549,7 +556,7 @@ public class SimSettings extends RestrictedSettingsFragment implements Indexable
                     mSubscriptionManager.getActiveSubscriptionInfoList();
             if (subInfoLists != null) {
                 for (SubscriptionInfo subInfo : subInfoLists) {
-                    if (isSlotProvisioned(subInfo.getSimSlotIndex())) {
+                    if (getProvisionStatus(subInfo.getSimSlotIndex()) == PROVISIONED) {
                         activeSubInfoCount++;
                     }
                 }
@@ -592,7 +599,7 @@ public class SimSettings extends RestrictedSettingsFragment implements Indexable
             if (!mIsChecked) {
                 if (getNumOfSubsProvisioned() > 1) {
                     logd("More than one sub is active, Deactivation possible.");
-                    sendUiccProvisioningRequest();
+                    showAlertDialog(CONFIRM_ALERT_DLG_ID, 0);
                 } else {
                     logd("Only one sub is active. Deactivation not possible.");
                     showAlertDialog(ERROR_ALERT_DLG_ID, R.string.sim_enabler_both_inactive);
@@ -625,12 +632,20 @@ public class SimSettings extends RestrictedSettingsFragment implements Indexable
 
             @Override
             protected Integer doInBackground(Void... params) {
-                TelephonyExtUtils extTelephony = TelephonyExtUtils.getInstance(mContext);
-                int result = mIsChecked ?
-                        extTelephony.activateUiccCard(mSlotId) :
-                        extTelephony.deactivateUiccCard(mSlotId);
-                newProvisionedState =
-                        extTelephony.getCurrentUiccCardProvisioningStatus(mSlotId);
+                int result = -1;
+                newProvisionedState = NOT_PROVISIONED;
+                try {
+                    if (mIsChecked) {
+                        result = mExtTelephony.activateUiccCard(mSlotId);
+                        newProvisionedState = PROVISIONED;
+                    } else {
+                        result = mExtTelephony.deactivateUiccCard(mSlotId);
+                    }
+                } catch (RemoteException ex) {
+                    loge("Activate  sub failed " + result + " phoneId " + mSlotId);
+                } catch (NullPointerException ex) {
+                    loge("Failed to activate sub Exception: " + ex);
+                }
                 return result;
             }
 
@@ -680,7 +695,7 @@ public class SimSettings extends RestrictedSettingsFragment implements Indexable
                 case ERROR_ALERT_DLG_ID:
                     builder.setMessage(mContext.getString(msgId));
                     builder.setNeutralButton(android.R.string.ok, mDialogClickListener);
-                    builder.setOnCancelListener(mDialogCanceListener);
+                    builder.setCancelable(false);
                     break;
 
                 case RESULT_ALERT_DLG_ID:
@@ -705,7 +720,7 @@ public class SimSettings extends RestrictedSettingsFragment implements Indexable
                     mSubscriptionManager.getActiveSubscriptionInfoList();
             if (subInfoLists != null) {
                 for (SubscriptionInfo subInfo : subInfoLists) {
-                    if (isSlotProvisioned(subInfo.getSimSlotIndex())
+                    if (getProvisionStatus(subInfo.getSimSlotIndex()) == PROVISIONED
                             && subInfo.getSubscriptionId() != mSubInfoRecord.getSubscriptionId())
                         activeSlotId = subInfo.getSimSlotIndex() + 1;
                 }
@@ -785,7 +800,7 @@ public class SimSettings extends RestrictedSettingsFragment implements Indexable
                                 showAlertDialog(ERROR_ALERT_DLG_ID, msgId);
                             } else {
                                 mCurrentUiccProvisionState = newProvisionedState == PROVISIONED;
-                                cleanUpPendingDialogs();
+                                showAlertDialog(RESULT_ALERT_DLG_ID, 0);
                             }
                             mHandler.removeMessages(EVT_PROGRESS_DLG_TIME_OUT);
                             break;
@@ -860,4 +875,21 @@ public class SimSettings extends RestrictedSettingsFragment implements Indexable
         Log.d(TAG, "isCallStateIdle " + callStateIdle);
         return callStateIdle;
     }
+
+    private final BroadcastReceiver mReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            String action = intent.getAction();
+            Log.d(TAG, "Intent received: " + action);
+            if (ACTION_UICC_MANUAL_PROVISION_STATUS_CHANGED.equals(action)) {
+                int phoneId = intent.getIntExtra(PhoneConstants.PHONE_KEY,
+                        SubscriptionManager.INVALID_SUBSCRIPTION_ID);
+                int newProvisionedState = intent.getIntExtra(EXTRA_NEW_PROVISION_STATE,
+                        NOT_PROVISIONED);
+                 updateSubscriptions();
+                 Log.d(TAG, "Received ACTION_UICC_MANUAL_PROVISION_STATUS_CHANGED on phoneId: "
+                         + phoneId + " new sub state " + newProvisionedState);
+            }
+        }
+    };
 }
